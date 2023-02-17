@@ -88,9 +88,21 @@ class ScrapeQueue:
 
 
 class Parser:
-    def __init__(self, config):
+    def __init__(self, base_dir, config):
+        self._base_dir = base_dir
         self.config = config
         self._last_request_time = None
+
+    def _dump(self, text, url):
+        # Create dump dir if it doesn't exist.
+        dump_dir = os.path.join(self._base_dir, self.config.dump_dir)
+        if not os.path.exists(dump_dir):
+            os.makedirs(dump_dir)
+
+        hash = hashlib.sha256(url.encode('utf-8')).hexdigest()
+        fname = os.path.join(dump_dir, hash)
+        with open(fname, 'w') as f:
+            f.write(text)
 
     def parse(self, queue, url):
         print(f"Processing {url}")
@@ -102,6 +114,9 @@ class Parser:
 
         self._last_request_time = time.time()
         response = requests.get(url, headers=self.config.headers)
+        if 'dump_dir' in self.config:
+            self._dump(response.text, url)
+
         soup = BeautifulSoup(response.text, 'html.parser')
         for link in soup.find_all('a'):
             href = link.get('href')
@@ -112,13 +127,13 @@ class Parser:
 
 
 def main(config, **params):
-    config_file = config
+    base_dir = os.path.dirname(config)
     config = parse_config(config, params)
 
-    with ScrapeQueue(os.path.dirname(config_file), config.scrape) as queue:
+    with ScrapeQueue(base_dir, config.scrape) as queue:
         queue.add(config.root)
 
-        parser = Parser(config.parser_config)
+        parser = Parser(base_dir, config.parser_config)
 
         while queue:
             url = queue.pop()
