@@ -1,0 +1,13 @@
+root: "https://www.farfetch.com/shopping/women/clothing-1/items.aspx"
+
+scrape:
+  max_pages: 5
+  state_file: ""
+
+parser_config:
+  base_url: "https://www.farfetch.com/"
+  headers:
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
+  throttle_per_second: 1
+  dump_dir: "dump"
+
