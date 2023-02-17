@@ -3,6 +3,7 @@ import os
 import time
 import urllib
 from collections import deque
+import re
 
 import attrdict as attrdict
 import yaml
@@ -29,22 +30,33 @@ class ScrapeQueue:
     def __init__(self, base_dir, scrape_config):
         self._config = scrape_config
         self._base_dir = base_dir
-        self._queue = deque()
         self._added = set()
+        self._regexps = [re.compile(r) for r in self._config.get('priorities', [])]
+        self._queues = [deque() for _ in range(len(self._regexps) + 1)]
+
+    def _url_priority(self, url):
+        ps = self._config.get('priorities', [])
+        for i, regex in enumerate(self._regexps):
+            if regex.match(url):
+                return i
+        return len(ps)
 
     def add(self, url):
         # Strip acnhors from url.
         url = url.split('#')[0]
         if url not in self._added:
-            self._queue.append(url)
-            print("  " + url)
+            self._queues[self._url_priority(url)].append(url)
+            print(f"{url}: Scheduled for download.")
             self._added.add(url)
         else:
             print("  " + url + " (skipped)")
 
     def pop(self):
         self._processed_count += 1
-        return self._queue.popleft()
+        for q in self._queues:
+            if q:
+                return q.popleft()
+        raise Exception("No more pages to process.")
 
     @property
     def _processed_count(self):
@@ -55,7 +67,7 @@ class ScrapeQueue:
         self._state.processed_count = value
 
     def __bool__(self):
-        return bool(self._queue) and self._processed_count < self._config.max_pages
+        return any(self._queues) and self._processed_count < self._config.max_pages
 
     # Save state to file when the scope is left.
     def __enter__(self):
@@ -72,8 +84,8 @@ class ScrapeQueue:
         if 'added' in self._state:
             self._added = set(self._state.added)
 
-        if 'queue' in self._state:
-            self._queue = deque(self._state.queue)
+        if 'queues' in self._state:
+            self._queues = [deque(q) for q in self._state.queues]
 
         return self
 
@@ -81,7 +93,7 @@ class ScrapeQueue:
         if self._state_fname:
             with open(self._state_fname, 'w') as f:
                 res = dict(self._state)
-                res['queue'] = list(self._queue)
+                res['queues'] = [list(q) for q in self._queues]
                 res['added'] = list(self._added)
                 yaml.dump(res, f)
 
@@ -107,6 +119,20 @@ class Parser:
         with open(os.path.join(self._dump_dir, 'index.txt'), 'a') as f:
             f.write(url + '\n')
 
+    def _fetch(self, url):
+        if 'scraper_api' in self.config:
+            payload = {'api_key': self.config.scraper_api.key,
+                       'render': False,
+                       'country_code': self.config.scraper_api.get('country_code', 'us'),
+                       'url': url}
+            response = requests.get('http://api.scraperapi.com', params=payload)
+        else:
+            response = requests.get(url, headers=self.config.get('headers', {}))
+
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch {url}: {response.status_code}")
+        return response.text
+
     def parse(self, queue, url):
         print(f"Processing {url}")
         # Check if we need to throttle next request.
@@ -116,11 +142,11 @@ class Parser:
                 time.sleep(1 / self.config.throttle_per_second - elapsed)
 
         self._last_request_time = time.time()
-        response = requests.get(url, headers=self.config.headers)
+        text = self._fetch(url)
         if 'dump_dir' in self.config:
-            self._dump(response.text, url)
+            self._dump(text, url)
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(text, 'html.parser')
         for link in soup.find_all('a'):
             href = link.get('href')
             if href is not None:
