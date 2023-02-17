@@ -1,8 +1,8 @@
-root: "https://www.farfetch.com/shopping/women/clothing-1/items.aspx"
+root: "https://www.farfetch.com/"
 
 scrape:
-  max_pages: 5
-  state_file: ""
+  max_pages: 9
+  state_file: "scrape_state.yaml"
 
 parser_config:
   base_url: "https://www.farfetch.com/"

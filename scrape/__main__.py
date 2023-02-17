@@ -30,28 +30,21 @@ class ScrapeQueue:
         self._config = scrape_config
         self._base_dir = base_dir
         self._queue = deque()
+        self._added = set()
 
     def add(self, url):
-        hash = hashlib.sha256(url.encode('utf-8')).hexdigest()
-        if hash not in self._state.hash_set:
+        # Strip acnhors from url.
+        url = url.split('#')[0]
+        if url not in self._added:
             self._queue.append(url)
             print("  " + url)
-            self._state.hash_set.add(hash)
-            self._added_count += 1
+            self._added.add(url)
         else:
             print("  " + url + " (skipped)")
 
     def pop(self):
         self._processed_count += 1
         return self._queue.popleft()
-
-    @property
-    def _added_count(self):
-        return self._state.get('added_count', 0)
-
-    @_added_count.setter
-    def _added_count(self, value):
-        self._state.added_count = value
 
     @property
     def _processed_count(self):
@@ -76,15 +69,21 @@ class ScrapeQueue:
         else:
             self._state = attrdict.AttrDict()
 
-        if 'hash_set' not in self._state:
-            self._state.hash_set = set()
+        if 'added' in self._state:
+            self._added = set(self._state.added)
+
+        if 'queue' in self._state:
+            self._queue = deque(self._state.queue)
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._state_fname:
             with open(self._state_fname, 'w') as f:
-                yaml.dump(dict(self._state), f)
-
+                res = dict(self._state)
+                res['queue'] = list(self._queue)
+                res['added'] = list(self._added)
+                yaml.dump(res, f)
 
 
 class Parser:
@@ -93,16 +92,20 @@ class Parser:
         self.config = config
         self._last_request_time = None
 
-    def _dump(self, text, url):
         # Create dump dir if it doesn't exist.
-        dump_dir = os.path.join(self._base_dir, self.config.dump_dir)
-        if not os.path.exists(dump_dir):
-            os.makedirs(dump_dir)
+        self._dump_dir = os.path.join(self._base_dir, self.config.dump_dir)
+        if not os.path.exists(self._dump_dir):
+            os.makedirs(self._dump_dir)
 
+    def _dump(self, text, url):
         hash = hashlib.sha256(url.encode('utf-8')).hexdigest()
-        fname = os.path.join(dump_dir, hash)
+        fname = os.path.join(self._dump_dir, hash)
         with open(fname, 'w') as f:
             f.write(text)
+
+        # Append URL to index file.
+        with open(os.path.join(self._dump_dir, 'index.txt'), 'a') as f:
+            f.write(url + '\n')
 
     def parse(self, queue, url):
         print(f"Processing {url}")
