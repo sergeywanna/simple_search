@@ -1,4 +1,5 @@
 import collections
+import concurrent
 import copy
 import hashlib
 import io
@@ -76,8 +77,6 @@ class ScrapeQueue:
 
     # Save state to file when the scope is left.
     def __enter__(self):
-        signal.signal(signal.SIGINT, self._sigint_handler)
-
         if self._config.state_file:
             self._state_fname = os.path.join(self._base_dir, self._config.state_file)
         else:
@@ -106,11 +105,6 @@ class ScrapeQueue:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cleanup()
-
-    def _sigint_handler(self, signal_received, frame):
-        print('SIGINT or CTRL-C detected. Saving state and exiting gracefully')
-        self._cleanup()
-        sys.exit(0)
 
 
 class Parser:
@@ -144,10 +138,13 @@ class Parser:
         root = etree.fromstring(content)
         ns_map = {'sm': 'http://www.sitemaps.org/schemas/sitemap/0.9',
                   "re": "http://exslt.org/regular-expressions"}
+        result = []
         for match in root.xpath(config.xpath, namespaces=ns_map):
-            self._queue.add(str(match))
+            result.append(str(match))
+        return result
 
     def _parse_products_gz(self, config, url):
+        result = []
         content = self._fetch(url)
         with gzip.open(io.BytesIO(content), 'rt') as f:
             root = etree.fromstring(f.read())
@@ -155,10 +152,11 @@ class Parser:
                       'image': 'http://www.google.com/schemas/sitemap-image/1.1'}
             for product in root.xpath(config.xpath, namespaces=ns_map):
                 for url in product.xpath(config.url_xpath, namespaces=ns_map):
-                    self._queue.add(str(url))
+                    result.append(str(url))
                 if 'image_xpath' in config:
                     for image in product.xpath(config.image_xpath, namespaces=ns_map):
-                        self._queue.add(str(image))
+                        result.append(str(image))
+        return result
 
     @staticmethod
     def _url2fname(url):
@@ -196,7 +194,7 @@ class Parser:
             raise Exception(f"Failed to fetch {url}: {response.status_code}")
         return response.content
 
-    def parse(self, queue, url):
+    def parse_url(self, url):
         print(f"Processing {url}")
         # Check if we need to throttle next request.
         if self._last_request_time and 'throttle_per_second' in self.config:
@@ -207,18 +205,50 @@ class Parser:
         for regex, method in self.parsers.items():
             if regex.search(url):
                 self._last_request_time = time.time()
-                method(url)
-                return
+                res = method(url)
+                if res is None:
+                    res = []
+                return res
 
         print(f"Could not find parser for {url}")
 
-        # soup = BeautifulSoup(text, 'html.parser')
-        # for link in soup.find_all('a'):
-        #     href = link.get('href')
-        #     if href is not None:
-        #         href = urllib.parse.urljoin(url, href)
-        #         if href.startswith(self.config.base_url):
-        #             queue.add(href)
+    def run(self):
+        if 'concurrency' not in self.config or self.config.concurrency == 1:
+            # Single-threaded mode.
+            while self._queue:
+                url = self._queue.pop()
+                for new_url in self.parse_url(url):
+                    self._queue.add(new_url)
+        else:
+            # Multi-threaded mode.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.config.concurrency) as executor:
+                futures = set()
+                count = 0
+                def done_closure(future):
+                    nonlocal count
+                    for new_url in future.result():
+                        self._queue.add(new_url)
+                    futures.remove(future)
+                    count += 1
+
+                try:
+                    while True:
+                        if not self._queue:
+                            concurrent.futures.wait(futures)
+                            if not self._queue:
+                                break
+
+                        url = self._queue.pop()
+                        future = executor.submit(self.parse_url, url)
+                        futures.add(future)
+                        future.add_done_callback(done_closure)
+
+                    print(f'Total of {count} URLs processed.')
+                except KeyboardInterrupt:
+                    print("Keyboard interrupt, waiting for scraper threads to finish...")
+                    executor.shutdown(wait=True)
+                    print("Done")
+                    raise
 
 
 def main(config, **params):
@@ -230,10 +260,11 @@ def main(config, **params):
             queue.add(seed)
 
         parser = Parser(base_dir, config.parser_config, queue)
-
-        while queue:
-            url = queue.pop()
-            parser.parse(queue, url)
+        try:
+            parser.run()
+        except KeyboardInterrupt:
+            queue.__exit__(None, None, None)
+            raise
 
 
 if __name__ == '__main__':
