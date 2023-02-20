@@ -1,5 +1,11 @@
+import collections
+import copy
 import hashlib
+import io
 import os
+import gzip
+import signal
+import sys
 import time
 import urllib
 from collections import deque
@@ -10,6 +16,7 @@ import yaml
 from fire import Fire
 import requests
 from bs4 import BeautifulSoup
+from lxml import etree
 
 
 def parse_config(config, params):
@@ -42,8 +49,6 @@ class ScrapeQueue:
         return len(ps)
 
     def add(self, url):
-        # Strip acnhors from url.
-        url = url.split('#')[0]
         if url not in self._added:
             self._queues[self._url_priority(url)].append(url)
             print(f"{url}: Scheduled for download.")
@@ -71,6 +76,8 @@ class ScrapeQueue:
 
     # Save state to file when the scope is left.
     def __enter__(self):
+        signal.signal(signal.SIGINT, self._sigint_handler)
+
         if self._config.state_file:
             self._state_fname = os.path.join(self._base_dir, self._config.state_file)
         else:
@@ -89,7 +96,7 @@ class ScrapeQueue:
 
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def _cleanup(self):
         if self._state_fname:
             with open(self._state_fname, 'w') as f:
                 res = dict(self._state)
@@ -97,30 +104,86 @@ class ScrapeQueue:
                 res['added'] = list(self._added)
                 yaml.dump(res, f)
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cleanup()
+
+    def _sigint_handler(self, signal_received, frame):
+        print('SIGINT or CTRL-C detected. Saving state and exiting gracefully')
+        self._cleanup()
+        sys.exit(0)
+
 
 class Parser:
-    def __init__(self, base_dir, config):
+    def __init__(self, base_dir, config, queue):
         self._base_dir = base_dir
         self.config = config
         self._last_request_time = None
+        self._queue = queue
 
         # Create dump dir if it doesn't exist.
         self._dump_dir = os.path.join(self._base_dir, self.config.dump_dir)
         if not os.path.exists(self._dump_dir):
             os.makedirs(self._dump_dir)
 
-    def _dump(self, text, url):
+        self.parsers = collections.OrderedDict()
+        for parser in self.config.parsers:
+            if parser.method == 'parse_sitemap':
+                config = copy.deepcopy(parser.config)
+                method = lambda url, cfg=config: self._parse_sitemap(cfg, url)
+            elif parser.method == 'parse_products_gz':
+                config = copy.deepcopy(parser.config)
+                method = lambda url, cfg=config: self._parse_products_gz(cfg, url)
+            elif parser.method == 'dump':
+                method = lambda url: self._dump(url)
+            else:
+                raise Exception("Unknown parser method: " + parser.method)
+            self.parsers[re.compile(parser.pattern)] = method
+
+    def _parse_sitemap(self, config, url):
+        content = self._fetch(url)
+        root = etree.fromstring(content)
+        ns_map = {'sm': 'http://www.sitemaps.org/schemas/sitemap/0.9',
+                  "re": "http://exslt.org/regular-expressions"}
+        for match in root.xpath(config.xpath, namespaces=ns_map):
+            self._queue.add(str(match))
+
+    def _parse_products_gz(self, config, url):
+        content = self._fetch(url)
+        with gzip.open(io.BytesIO(content), 'rt') as f:
+            root = etree.fromstring(f.read())
+            ns_map = {'sm': 'http://www.sitemaps.org/schemas/sitemap/0.9',
+                      'image': 'http://www.google.com/schemas/sitemap-image/1.1'}
+            for product in root.xpath(config.xpath, namespaces=ns_map):
+                for url in product.xpath(config.url_xpath, namespaces=ns_map):
+                    self._queue.add(str(url))
+                if 'image_xpath' in config:
+                    for image in product.xpath(config.image_xpath, namespaces=ns_map):
+                        self._queue.add(str(image))
+
+    @staticmethod
+    def _url2fname(url):
         hash = hashlib.sha256(url.encode('utf-8')).hexdigest()
-        fname = os.path.join(self._dump_dir, hash)
-        with open(fname, 'w') as f:
-            f.write(text)
+        ext = url.split('.')[-1]
+        if len(ext) > 4:
+            ext = ''
+        else:
+            ext = '.' + 'html' if ext == 'aspx' else ext
+        return hash + ext
+
+    def _dump(self, url):
+        fname = self._url2fname(url)
+        with open(os.path.join(self._dump_dir, fname), 'wb') as f:
+            f.write(self._fetch(url))
 
         # Append URL to index file.
         with open(os.path.join(self._dump_dir, 'index.txt'), 'a') as f:
             f.write(url + '\n')
 
     def _fetch(self, url):
-        if 'scraper_api' in self.config:
+        if urllib.parse.urlparse(url).scheme == 'file':
+            with open(urllib.parse.urlparse(url).path, 'rb') as f:
+                return f.read()
+        elif 'scraper_api' in self.config:
             payload = {'api_key': self.config.scraper_api.key,
                        'render': False,
                        'country_code': self.config.scraper_api.get('country_code', 'us'),
@@ -131,7 +194,7 @@ class Parser:
 
         if response.status_code != 200:
             raise Exception(f"Failed to fetch {url}: {response.status_code}")
-        return response.text
+        return response.content
 
     def parse(self, queue, url):
         print(f"Processing {url}")
@@ -141,18 +204,21 @@ class Parser:
             if elapsed < 1 / self.config.throttle_per_second:
                 time.sleep(1 / self.config.throttle_per_second - elapsed)
 
-        self._last_request_time = time.time()
-        text = self._fetch(url)
-        if 'dump_dir' in self.config:
-            self._dump(text, url)
+        for regex, method in self.parsers.items():
+            if regex.search(url):
+                self._last_request_time = time.time()
+                method(url)
+                return
 
-        soup = BeautifulSoup(text, 'html.parser')
-        for link in soup.find_all('a'):
-            href = link.get('href')
-            if href is not None:
-                href = urllib.parse.urljoin(url, href)
-            if href.startswith(self.config.base_url):
-                queue.add(href)
+        print(f"Could not find parser for {url}")
+
+        # soup = BeautifulSoup(text, 'html.parser')
+        # for link in soup.find_all('a'):
+        #     href = link.get('href')
+        #     if href is not None:
+        #         href = urllib.parse.urljoin(url, href)
+        #         if href.startswith(self.config.base_url):
+        #             queue.add(href)
 
 
 def main(config, **params):
@@ -160,9 +226,10 @@ def main(config, **params):
     config = parse_config(config, params)
 
     with ScrapeQueue(base_dir, config.scrape) as queue:
-        queue.add(config.root)
+        for seed in config.seeds:
+            queue.add(seed)
 
-        parser = Parser(base_dir, config.parser_config)
+        parser = Parser(base_dir, config.parser_config, queue)
 
         while queue:
             url = queue.pop()

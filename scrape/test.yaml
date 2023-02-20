@@ -1,8 +1,9 @@
-root: "https://www.farfetch.com/"
+seeds:
+  - "file:///Users/sergey/Documents/search/us-sitemap-products-1.xml.gz"
 
 scrape:
   max_pages: 5
-  state_file: "scrape_state.yaml"
+  state_file: "/tmp/ff_dump/state.yaml"
   priorities:
     - '^https://www.farfetch.com/.*item-\d+.aspx(\?.*)?$'
 
@@ -12,6 +13,19 @@ parser_config:
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
   scraper_api:
     country_code: "us"
-  throttle_per_second: 1
-  dump_dir: "/tmp/test_dump/"
+  throttle_per_second: 10
+  dump_dir: "/tmp/ff_dump/"
 
+  parsers:
+    - pattern: 'sitemap.xml$'
+      method: 'parse_sitemap'
+      config:
+        xpath: '//sm:sitemap/sm:loc/text()[re:match(., "us-sitemap-products-\d+.xml.gz")]'
+    - pattern: 'us-sitemap-products-\d+.xml.gz$'
+      method: 'parse_products_gz'
+      config:
+        xpath: '//sm:url'
+        url_xpath: 'sm:loc/text()'
+        image_xpath: 'image:image/image:loc/text()'
+    - pattern: ''
+      method: 'dump'

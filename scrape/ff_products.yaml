@@ -1,0 +1,33 @@
+seeds:
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-1.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-2.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-3.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-4.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-5.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-6.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-7.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-8.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-9.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-10.xml.gz"
+  - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-11.xml.gz"
+
+scrape:
+  max_pages: 100
+  state_file: "/Users/sergey/Documents/ff_dump/products_state.yaml"
+  priorities: []
+
+parser_config:
+  base_url: "https://www.farfetch.com/"
+  scraper_api:
+    country_code: "us"
+  throttle_per_second: 10
+  dump_dir: "/Users/sergey/Documents/ff_dump/products/"
+
+  parsers:
+    - pattern: 'us-sitemap-products-\d+.xml.gz$'
+      method: 'parse_products_gz'
+      config:
+        xpath: '//sm:url'
+        url_xpath: 'sm:loc/text()'
+    - pattern: ''
+      method: 'dump'
