@@ -5,8 +5,6 @@ import hashlib
 import io
 import os
 import gzip
-import signal
-import sys
 import time
 import urllib
 from collections import deque
@@ -16,7 +14,6 @@ import attrdict as attrdict
 import yaml
 from fire import Fire
 import requests
-from bs4 import BeautifulSoup
 from lxml import etree
 
 
@@ -171,6 +168,7 @@ class Parser:
     def _dump(self, url):
         fname = self._url2fname(url)
         with open(os.path.join(self._dump_dir, fname), 'wb') as f:
+            # TODO: Check that there was no redirect and the URL is the same.
             f.write(self._fetch(url))
 
         # Append URL to index file.

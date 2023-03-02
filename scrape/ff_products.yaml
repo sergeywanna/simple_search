@@ -12,7 +12,7 @@ seeds:
   - "file:///Users/sergey/Documents/ff_dump/us-sitemap-products-11.xml.gz"
 
 scrape:
-  max_pages: 1000
+  max_pages: 5000
   state_file: "/Users/sergey/Documents/ff_dump/products_state.yaml"
   priorities: []
 
