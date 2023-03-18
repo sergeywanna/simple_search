@@ -18,11 +18,14 @@ def parse_main_sitemap(sitemap_url):
 def download_xml_file(url):
     response = requests.get(url, headers=HEADERS)
     content = response.text
+    print(f'Downloaded {url} ({len(content)} bytes)')
     return content
 
 def parse_individual_sitemap(xml_content):
     root = ElementTree.fromstring(xml_content)
-    urls = [element.get('href') for element in root.findall('.//xhtml:link', namespaces={'xhtml': 'http://www.w3.org/1999/xhtml'})]
+    urls = [element.get('href')
+            for element in
+            root.findall('.//sit:loc', namespaces={"sit": "http://www.sitemaps.org/schemas/sitemap/0.9"})]
     return urls
 
 def main():
