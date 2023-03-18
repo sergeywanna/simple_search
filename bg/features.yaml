@@ -1,0 +1,3 @@
+url: ".//link[@rel='canonical']/@href"
+brand: "//div[@class='product-heading']//h1//span/text()"
+# description: ".//xhtml:meta[@name='description']/@content"
