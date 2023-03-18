@@ -23,9 +23,10 @@ def download_xml_file(url):
 
 def parse_individual_sitemap(xml_content):
     root = ElementTree.fromstring(xml_content)
-    urls = [element.get('href')
+    urls = [element.text
             for element in
             root.findall('.//sit:loc', namespaces={"sit": "http://www.sitemaps.org/schemas/sitemap/0.9"})]
+    print(f'Found {len(urls)} URLs in the sitemap.')
     return urls
 
 def main():
@@ -39,7 +40,9 @@ def main():
 
     all_urls = []
 
-    for sitemap_url in main_sitemap_urls:
+    for i, sitemap_url in enumerate(main_sitemap_urls):
+        if i < 2:
+            continue
         xml_content = download_xml_file(sitemap_url)
         urls = parse_individual_sitemap(xml_content)
         all_urls.extend(urls)
