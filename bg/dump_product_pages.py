@@ -1,121 +1,180 @@
 import argparse
 import os
-import time
+import queue
+import random
 import requests
-import yaml
-from urllib.parse import urlparse
-import concurrent.futures
+import sys
+import time
 import threading
+from urllib.parse import urlparse
+import yaml
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36'
-}
 
-class RateLimiter:
-    def __init__(self, rate_limit):
-        self.rate_limit = rate_limit
+class Dispatcher:
+    def __init__(self, objects, closure, num_retries, parallelism):
+        self.objects = objects
+        self.closure = closure
+        self.num_retries = num_retries
+        self.parallelism = parallelism
+        self.task_queue = queue.Queue()
         self.lock = threading.Lock()
-        self.last_request = 0
+        self.stop_event = threading.Event()
+        self.threads = []
 
-    def wait(self):
+        # Prepare the task queue with the objects and their retry counts
+        for obj in self.objects:
+            self.task_queue.put((obj, 0))
+
+    def _worker(self):
+        while not self.stop_event.is_set():
+            try:
+                obj, retries = self.task_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            try:
+                self.closure(obj)
+            except Exception as e:
+                print(f"Task failed: {e} (retry: {retries})")
+                with self.lock:
+                    if retries < self.num_retries:
+                        self.task_queue.put((obj, retries + 1))
+                    else:
+                        print(f"Task failed after {self.num_retries} retries: {e}")
+            finally:
+                self.task_queue.task_done()
+
+    def start(self):
+        for _ in range(self.parallelism):
+            t = threading.Thread(target=self._worker)
+            t.start()
+            self.threads.append(t)
+
+    def stop(self):
+        self.stop_event.set()
+
+        for t in self.threads:
+            t.join()
+
+    def state(self):
         with self.lock:
-            current_time = time.time()
-            elapsed_time = current_time - self.last_request
-            sleep_time = max(1 / self.rate_limit - elapsed_time, 0)
-            time.sleep(sleep_time)
-            self.last_request = time.time()
+            remaining_tasks = list(self.task_queue.queue)
+        return remaining_tasks
 
-def download_file(url, directory, rate_limiter, scraper_api_key=None):
-    filename = os.path.split(urlparse(url).path)[-1]
-    file_path = os.path.join(directory, filename)
+    def join(self):
+        for t in self.threads:
+            t.join()
 
-    if scraper_api_key:
-        url = f'http://api.scraperapi.com?api_key={scraper_api_key}&url={url}'
+    def restore(self, state):
+        with self.lock:
+            self.task_queue = queue.Queue()
 
-    rate_limiter.wait()
-    response = requests.get(url, headers=HEADERS, allow_redirects=False)
+            for task in state:
+                self.task_queue.put(task)
 
-    if response.status_code == 200:
-        with open(file_path, 'wb') as f:
-            f.write(response.content)
-        print(f'Successfully downloaded {url}')
-        return True
-    else:
-        print(f'Failed to download {url}: {response.status_code} {response.reason}')
-        return False
+            self.threads = []
 
-def process_url(url, directory, rate_limiter, scraper_api_key):
-    if not download_file(url, directory, rate_limiter, scraper_api_key):
-        return url
-    return None
 
-def process_url_wrapper(url, directory, rate_limiter, scraper_api_key, stop_event):
-    try:
-        if not stop_event.is_set():
-            return process_url(url, directory, rate_limiter, scraper_api_key)
-    except Exception as e:
-        print(f'Exception while processing {url}: {e}')
-        return None
+class Downloader:
+    def __init__(self, save_directory, scrape_api_key=None):
+        self.save_directory = save_directory
+        self.scrape_api_key = scrape_api_key
+
+        # Create the save directory if it does not exist
+        os.makedirs(save_directory, exist_ok=True)
+
+    def _download_url(self, url):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36"
+        }
+
+        if self.scrape_api_key:
+            api_url = "http://api.scraperapi.com"
+            params = {
+                "api_key": self.scrape_api_key,
+                "url": url,
+            }
+            response = requests.get(api_url, headers=headers, params=params, allow_redirects=False)
+        else:
+            response = requests.get(url, headers=headers, allow_redirects=False)
+
+        if response.status_code != 200:
+            raise Exception(f"Failed to download URL: {url} (status: {response.status_code})")
+
+        return response.content
+
+    def _save_file(self, content, filename):
+        file_path = os.path.join(self.save_directory, filename)
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+    def _get_filename(self, url):
+        parsed = urlparse(url)
+        path_parts = parsed.path.strip("/").split("/")
+        file_base = path_parts[-1].split("?")[0]
+        return f"{file_base}.html"
+
+    def run(self, url):
+        print(f"Starting download of {url}")
+        content = self._download_url(url)
+        filename = self._get_filename(url)
+        self._save_file(content, filename)
+        print(f"Downloaded {url}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Download files from a list of URLs.')
-    parser.add_argument('--input_file', type=str, required=True, help='Input file with URLs.')
-    parser.add_argument('--output_dir', type=str, required=True, help='Output directory for downloaded files.')
-    parser.add_argument('--parallelism', type=int, default=1, help='Number of parallel downloads.')
-    parser.add_argument('--scraper_api_key', type=str, help='ScraperAPI key for proxying requests.')
-    parser.add_argument('--rate_limit', type=float, default=1, help='Number of requests per second.')
-    parser.add_argument('--max-retries', type=int, default=3, help='Maximum number of retries per URL (default: 3)')
-    parser.add_argument('--task-timeout', type=int, default=300, help='Timeout for tasks in seconds (default: 300)')
+    parser = argparse.ArgumentParser(description="Download URLs using Dispatcher and Downloader")
+    parser.add_argument("--urls_file", required=True, help="Path to the file containing URLs to download (one URL per line)")
+    parser.add_argument("--state_file", required=True, help="Path to the file containing the saved state of Dispatcher")
+    parser.add_argument("--save_directory", required=True, help="Directory to save downloaded files")
+    parser.add_argument("--scrape_api_key", default=None, help="ScrapeAPI key (optional)")
+    parser.add_argument("--num_retries", type=int, default=3, help="Number of retries for each download task")
+    parser.add_argument("--parallelism", type=int, default=5, help="Number of parallel download tasks")
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
+    # Read URLs from the file
+    with open(args.urls_file, "r") as f:
+        urls = [line.strip() for line in f.readlines()]
 
-    state_file = 'download_state.yaml'
+    # Initialize Downloader and Dispatcher
+    downloader = Downloader(args.save_directory, args.scrape_api_key)
+    def mock_runner(url):
+        # Random number of seconds between 1 and 3
+        time.sleep(random.randint(1, 3))
+        # with 0.2 probability, fail the task
+        if random.random() < 0.2:
+            print(f"Failed to download URL: {url}")
+            raise Exception("Failed to download URL")
+        else:
+            print(f"Downloaded URL: {url}")
 
-    if os.path.exists(state_file):
-        with open(state_file, 'r') as f:
+
+    dispatcher = Dispatcher(urls, downloader.run, args.num_retries, args.parallelism)
+    # dispatcher = Dispatcher(urls, mock_runner, args.num_retries, args.parallelism)
+
+    # Restore state if the state file exists
+    if os.path.exists(args.state_file):
+        print(f"Restoring Dispatcher state from {args.state_file}...")
+        with open(args.state_file, "r") as f:
             state = yaml.safe_load(f)
-        remaining_urls = state['remaining_urls']
-    else:
-        with open(args.input_file, 'r') as f:
-            urls = [line.strip() for line in f.readlines()]
-        remaining_urls = urls
+        dispatcher.restore(state)
 
-    rate_limiter = RateLimiter(args.rate_limit)
+    try:
+        dispatcher.start()
+        dispatcher.join()
+    except KeyboardInterrupt:
+        print("Stopping Dispatcher...")
+        dispatcher.stop()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism) as executor:
-        stop_event = threading.Event()
-        url_attempts = {url: 0 for url in urls}
-        max_retries = args.max_retries
-        task_timeout = args.task_timeout
-        try:
-            while remaining_urls:
-                future_to_url = {
-                    executor.submit(process_url_wrapper, url, args.output_dir, rate_limiter, args.scraper_api_key,
-                                    stop_event): url for url in remaining_urls}
-                completed_urls = []
+        # Save the state to the disk as YAML
+        state = dispatcher.state()
+        with open(args.state_file, "w") as f:
+            yaml.safe_dump(state, f)
 
-                for future in concurrent.futures.as_completed(future_to_url, timeout=task_timeout):
-                    url = future_to_url[future]
-                    result = future.result()
-                    if result is not None:
-                        completed_urls.append(result)
-                    else:
-                        url_attempts[url] += 1
-
-                remaining_urls = [url for url in remaining_urls if
-                                  url not in completed_urls and url_attempts[url] <= max_retries]
-        except KeyboardInterrupt:
-            print('\nTerminating remaining tasks...')
-            stop_event.set()
-
-        with open(state_file, 'w') as f:
-            yaml.dump({'remaining_urls': remaining_urls}, f)
-
-        print('State saved. You can resume later.')
+        print("Dispatcher state saved.")
+        sys.exit(0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
