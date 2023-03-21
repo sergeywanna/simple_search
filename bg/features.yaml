@@ -1,3 +1,9 @@
-url: ".//link[@rel='canonical']/@href"
-brand: "//div[@class='product-heading']//h1//span/text()"
-# description: ".//xhtml:meta[@name='description']/@content"
+url:
+  xpath: ".//link[@rel='canonical']/@href"
+brand:
+  xpath: "//div[@class='product-heading']//h1//span"
+short:
+  xpath: "//div[@class='product-heading']//h1/span"
+long:
+  xpath: "//div[@id='mainContent']//script"
+  regex: 'description"\s*:\s*"([^"]+)"'
