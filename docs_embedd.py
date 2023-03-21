@@ -12,18 +12,17 @@ def get_embed(doc):
     return embed['data'][0]['embedding']
 
 
-def main(openai_key, docs_csv):
+def main(openai_key, docs_csv, template):
     openai.api_key = openai_key
     with open(docs_csv, 'r') as f:
         reader = csv.DictReader(f)
         # Create ordinary csv writer to stdout
         writer = csv.writer(sys.stdout)
         for row in reader:
-            doc = f"{row['brand']} {row['short_description']}\nBrand: {row['brand']}\nPrice: {row['price']}\n{row['long_description']}"
+            doc = template.format(**row)
+            # doc = f"{row['brand']} {row['short_description']}\nBrand: {row['brand']}\nPrice: {row['price']}\n{row['long_description']}"
             embed = get_embed(doc)
-            writer.writerow([row['product_id'], str(embed)])
-
-
+            writer.writerow([row['url'], str(embed)])
 
 
 if __name__ == '__main__':
