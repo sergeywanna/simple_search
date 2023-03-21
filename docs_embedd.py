@@ -3,6 +3,7 @@ import sys
 
 import openai
 import tenacity
+import tqdm
 from fire import Fire
 
 
@@ -12,17 +13,32 @@ def get_embed(doc):
     return embed['data'][0]['embedding']
 
 
-def main(openai_key, docs_csv, template):
+def main(openai_key, docs_csv, template, output_file):
     openai.api_key = openai_key
+
+    # Read existing output file and create a set of processed URLs
+    processed_urls = set()
+    try:
+        with open(output_file, 'r') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                processed_urls.add(row[0])
+    except FileNotFoundError:
+        pass  # If the output file does not exist, proceed with an empty set of processed URLs
+
     with open(docs_csv, 'r') as f:
         reader = csv.DictReader(f)
-        # Create ordinary csv writer to stdout
-        writer = csv.writer(sys.stdout)
-        for row in reader:
-            doc = template.format(**row)
-            # doc = f"{row['brand']} {row['short_description']}\nBrand: {row['brand']}\nPrice: {row['price']}\n{row['long_description']}"
-            embed = get_embed(doc)
-            writer.writerow([row['url'], str(embed)])
+
+        # Open the output file in append mode
+        with open(output_file, 'a', newline='') as outfile:
+            writer = csv.writer(outfile)
+
+            for row in tqdm.tqdm(reader):
+                url = row['url']
+                if url not in processed_urls:
+                    doc = template.format(**row)
+                    embed = get_embed(doc)
+                    writer.writerow([url, str(embed)])
 
 
 if __name__ == '__main__':
