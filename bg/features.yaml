@@ -7,3 +7,7 @@ short:
 long:
   xpath: "//div[@id='mainContent']//script"
   regex: 'description"\s*:\s*"([^"]+)"'
+price:
+  xpath: "//span[@class='retailPrice  ']/text()"
+picture:
+  xpath: "//div[@class='product-media-wrapper']//picture//img/@src"

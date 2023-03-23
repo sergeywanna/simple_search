@@ -104,20 +104,24 @@ class Downloader:
         return response.content
 
     def _save_file(self, content, filename):
-        file_path = os.path.join(self.save_directory, filename)
-        with open(file_path, "wb") as f:
+        with open(filename, "wb") as f:
             f.write(content)
 
     def _get_filename(self, url):
         parsed = urlparse(url)
         path_parts = parsed.path.strip("/").split("/")
         file_base = path_parts[-1].split("?")[0]
-        return f"{file_base}.html"
+        return  os.path.join(self.save_directory, f"{file_base}.html")
 
     def run(self, url):
+        filename = self._get_filename(url)
+        # If exists, skip downloading
+        if os.path.exists(filename):
+            print(f"Skipping download of {url}")
+            return
+
         print(f"Starting download of {url}")
         content = self._download_url(url)
-        filename = self._get_filename(url)
         self._save_file(content, filename)
         print(f"Downloaded {url}")
 
@@ -148,10 +152,10 @@ def main():
             raise Exception("Failed to download URL")
         else:
             print(f"Downloaded URL: {url}")
+    # dispatcher = Dispatcher(urls, mock_runner, args.num_retries, args.parallelism)
 
 
     dispatcher = Dispatcher(urls, downloader.run, args.num_retries, args.parallelism)
-    # dispatcher = Dispatcher(urls, mock_runner, args.num_retries, args.parallelism)
 
     # Restore state if the state file exists
     if os.path.exists(args.state_file):

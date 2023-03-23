@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import lxml.html
+import tqdm
 import yaml
 import re
 
@@ -53,14 +54,13 @@ def main():
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
-        for file in os.listdir(args.input_dir):
+        for file in tqdm.tqdm(os.listdir(args.input_dir)):
             if not file.endswith(".html"):
                 continue
             file_path = os.path.join(args.input_dir, file)
             if os.path.isfile(file_path):
                 features = extract_features(file_path, feature_config)
                 writer.writerow(features)
-                print(f"Processed {file}")
 
 
 if __name__ == "__main__":
