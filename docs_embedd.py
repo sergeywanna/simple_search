@@ -13,7 +13,7 @@ def get_embed(doc):
     return embed['data'][0]['embedding']
 
 
-def main(openai_key, docs_csv, template, output_file):
+def main(openai_key, docs_csv, template, output_file, debug=0):
     openai.api_key = openai_key
 
     # Read existing output file and create a set of processed URLs
@@ -33,12 +33,16 @@ def main(openai_key, docs_csv, template, output_file):
         with open(output_file, 'a', newline='') as outfile:
             writer = csv.writer(outfile)
 
+            i = 0
             for row in tqdm.tqdm(reader):
                 url = row['url']
                 if url not in processed_urls:
                     doc = template.format(**row)
+                    if debug != 0 and i % debug == 0:
+                        print(doc, file=sys.stderr)
                     embed = get_embed(doc)
                     writer.writerow([url, str(embed)])
+                    i += 1
 
 
 if __name__ == '__main__':
