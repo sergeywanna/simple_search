@@ -1,9 +1,9 @@
 url:
   xpath: ".//link[@rel='canonical']/@href"
 brand:
-  xpath: "//div[@class='product-heading']//h1//span"
+  xpath: "//div[@class='product-heading']//h1/a/span"
 short:
-  xpath: "//div[@class='product-heading']//h1/span"
+  xpath: "//div[@class='product-heading']//span[@class='product-heading__name__product']"
 long:
   xpath: "//div[@id='mainContent']//script"
   regex: 'description"\s*:\s*"([^"]+)"'
