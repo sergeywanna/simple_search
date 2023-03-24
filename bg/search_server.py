@@ -43,8 +43,14 @@ def get_external_search_results(query):
 
 # Define the HTML template for search results
 RESULT_TEMPLATE = """
-<div>
-    <a href="{{ result.URL }}"><h3>{{ result.brand }} {{ result.short }}</h3></a>
+<div class="result">
+    <a href="{{ result.URL }}" target="_blank" class="result-link">
+        <img src="https:{{ result.picture }}" alt="{{ result.brand }} {{ result.short }}">
+        <div class="result-info">
+            <h3>{{ result.brand }} {{ result.short }}</h3>
+            <p>{{ result.price }}</p>
+        </div>
+    </a>
 </div>
 """
 
@@ -57,20 +63,56 @@ def index():
     query = request.args.get("query")
     if query:
         results = search(query)
-        print(results[0])
         results = [render_template_string(RESULT_TEMPLATE, result=result) for result in results]
         external_results = get_external_search_results(query)
 
     return render_template_string("""
+    <style>
+        .results-container {
+            display: flex;
+            flex-wrap: wrap;
+            margin-left: -8px;
+            margin-right: -8px;
+        }
+        .result {
+            width: calc(50% - 48px);
+            margin: 8px;
+            padding: 16px;
+            background-color: #f8f8f8;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+        }
+        .result img {
+            max-width: 100%;
+            max-height: 800px;
+            height: auto;
+        }
+        .result-link {
+            text-decoration: none;
+            color: inherit;
+        }
+        .result-info {
+            margin-top: 8px;
+        }
+        .result-info h3 {
+            margin: 0;
+            font-size: 16px;
+        }
+        .result-info p {
+            margin: 0;
+        }
+    </style> 
     <form method="get">
         <input type="text" name="query" placeholder="Search" value="{{ query }}">
         <button type="submit">Search</button>
     </form>
     <div style="display: flex;">
         <div style="flex: 1;">
-            {% for result in results %}
-                {{ result | safe }}
-            {% endfor %}
+            <div class="results-container">
+                {% for result in results %}
+                    {{ result | safe }}
+                {% endfor %}
+            </div>
         </div>
         <div style="flex: 1;">
             {% if external_results %}
