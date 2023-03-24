@@ -16,43 +16,51 @@ EXTERNAL_WEBSITE_SEARCH_URL = "https://www.example.com/search"
 app = Flask(__name__)
 
 
-# Load data from CSV files
-def load_data(embeddings_csv, data_csv):
-    with open(embeddings_csv) as f:
-        reader = csv.reader(f)
-        embeddings = {row[0]: eval(row[1]) for row in reader}
+class SearchEngine:
+    def __init__(self, embeddings_csv, data_csv):
+        self.embeddings, self.data = self.load_data(embeddings_csv, data_csv)
+        self.urls = np.array(list(self.embeddings.keys()))
+        self.embeddings = np.array(list(self.embeddings.values()))
 
-    with open(data_csv) as f:
-        reader = csv.DictReader(f)
-        data = {row["url"]: row for row in reader}
+    @staticmethod
+    def load_data(embeddings_csv, data_csv):
+        with open(embeddings_csv) as f:
+            reader = csv.reader(f)
+            embeddings = {row[0]: np.array(eval(row[1])) for row in reader}
 
-    return embeddings, data
+        with open(data_csv) as f:
+            reader = csv.DictReader(f)
+            data = {row["url"]: row for row in reader}
 
+        return embeddings, data
 
-# Compute the cosine similarity
-def search(query):
-    q_emb = openai.Embedding.create(input=query, engine='text-embedding-ada-002')['data'][0]['embedding']
-    scores = [(url, np.dot(q_emb, embedding)) for url, embedding in embeddings.items()]
-    scores.sort(key=lambda x: x[1], reverse=True)
-    return [data[url] for url, _ in scores[:30]]
+    def search(self, query):
+        q_emb = openai.Embedding.create(input=query, engine='text-embedding-ada-002')['data'][0]['embedding']
+        q_emb = np.array(q_emb)
+        sim = np.dot(self.embeddings, q_emb)
+        top = np.argsort(sim)[::-1][:30]
+        return [self.data[url] for url in self.urls[top]]
 
 # Generate the search results
 def get_external_search_results(query):
     search_url = f"{EXTERNAL_WEBSITE_SEARCH_URL}?q={requests.utils.quote(query)}"
     return search_url
 
+
 # Define the HTML template for search results
 RESULT_TEMPLATE = """
 <div class="result">
-    <a href="{{ result.URL }}" target="_blank" class="result-link">
+    <a href="{{ result.url }}" target="_blank" class="result-link">
         <img src="https:{{ result.picture }}" alt="{{ result.brand }} {{ result.short }}">
         <div class="result-info">
-            <h3>{{ result.brand }} {{ result.short }}</h3>
+            <h3>{{ result.brand }}</h3>
+            <h4>{{ result.short }}</h4>
             <p>{{ result.price }}</p>
         </div>
     </a>
 </div>
 """
+
 
 # Define the main route
 @app.route("/", methods=["GET"])
@@ -62,12 +70,15 @@ def index():
 
     query = request.args.get("query")
     if query:
-        results = search(query)
+        results = search_engine.search(query)
         results = [render_template_string(RESULT_TEMPLATE, result=result) for result in results]
         external_results = get_external_search_results(query)
 
     return render_template_string("""
     <style>
+        body {
+            font-family: Larsseit sans-serif;
+        }
         .results-container {
             display: flex;
             flex-wrap: wrap;
@@ -96,7 +107,11 @@ def index():
         }
         .result-info h3 {
             margin: 0;
-            font-size: 16px;
+            font-size: 15px;
+        }
+        .result-info h4 {
+            margin: 0;
+            font-size: 12px;
         }
         .result-info p {
             margin: 0;
@@ -120,7 +135,8 @@ def index():
             {% endif %}
         </div>
     </div>
-    """, results=results, external_results=external_results, RESULT_TEMPLATE=RESULT_TEMPLATE)
+    """,
+                                  results=results, external_results=external_results, RESULT_TEMPLATE=RESULT_TEMPLATE)
 
 
 if __name__ == "__main__":
@@ -133,6 +149,6 @@ if __name__ == "__main__":
 
     openai.api_key = args.openai_key
     EXTERNAL_WEBSITE_SEARCH_URL = args.external_search_url
+    search_engine = SearchEngine(args.embeddings_csv, args.data_csv)
 
-    embeddings, data = load_data(args.embeddings_csv, args.data_csv)
     app.run()
