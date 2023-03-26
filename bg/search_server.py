@@ -1,13 +1,10 @@
 import argparse
 import csv
 import openai
+import os
 from flask import Flask, render_template_string, request
 import numpy as np
 import requests
-from bs4 import BeautifulSoup
-
-# Replace with your OpenAI API key
-OPENAI_API_KEY = "your-api-key"
 
 # External website search URL
 EXTERNAL_WEBSITE_SEARCH_URL = "https://www.example.com/search"
@@ -15,6 +12,7 @@ EXTERNAL_WEBSITE_SEARCH_URL = "https://www.example.com/search"
 # Initialize Flask and OpenAI
 app = Flask(__name__)
 
+search_engine = None
 
 class SearchEngine:
     def __init__(self, embeddings_csv, data_csv):
@@ -138,17 +136,9 @@ def index():
     """,
                                   results=results, external_results=external_results, RESULT_TEMPLATE=RESULT_TEMPLATE)
 
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+EXTERNAL_WEBSITE_SEARCH_URL = os.environ.get("EXTERNAL_WEBSITE_SEARCH_URL")
+search_engine = SearchEngine(os.environ.get("EMBEDDINGS_CSV"), os.environ.get("DATA_CSV"))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="A simple web server for searching CSV data.")
-    parser.add_argument("--openai_key", required=True, help="Your OpenAI API key")
-    parser.add_argument("--embeddings_csv", required=True, help="Path to the embeddings CSV file")
-    parser.add_argument("--data_csv", required=True, help="Path to the data CSV file")
-    parser.add_argument("--external_search_url", required=True, help="External website search URL")
-    args = parser.parse_args()
-
-    openai.api_key = args.openai_key
-    EXTERNAL_WEBSITE_SEARCH_URL = args.external_search_url
-    search_engine = SearchEngine(args.embeddings_csv, args.data_csv)
-
     app.run()
