@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import openai
 import os
 from flask import Flask, render_template_string, request
@@ -15,26 +16,34 @@ app = Flask(__name__)
 search_engine = None
 
 class SearchEngine:
-    def __init__(self, embeddings_csv, data_csv):
-        self.embeddings, self.data = self.load_data(embeddings_csv, data_csv)
-        self.urls = np.array(list(self.embeddings.keys()))
-        self.embeddings = np.array(list(self.embeddings.values()))
+    def __init__(self, urls_txt, embeddings_npy, data_csv):
+        self.urls, self.embeddings = self.load_embeddings(urls_txt, embeddings_npy)
+        self.data = self.load_data(data_csv)
 
     @staticmethod
-    def load_data(embeddings_csv, data_csv):
-        with open(embeddings_csv) as f:
-            reader = csv.reader(f)
-            embeddings = {row[0]: np.array(eval(row[1])) for row in reader}
+    def load_embeddings(urls_txt, embeddings_npy):
+        logging.info("Loading embeddings")
+        with open(urls_txt, 'r') as f:
+            urls = [url.strip() for url in f.readlines()]
 
+        embeddings = np.load(embeddings_npy)
+        logging.info("Done")
+
+        return np.array(urls), embeddings
+
+    @staticmethod
+    def load_data(data_csv):
+        logging.info("Loading data")
         with open(data_csv) as f:
             reader = csv.DictReader(f)
             data = {row["url"]: row for row in reader}
+        logging.info("Done")
 
-        return embeddings, data
+        return data
 
     def search(self, query):
         q_emb = openai.Embedding.create(input=query, engine='text-embedding-ada-002')['data'][0]['embedding']
-        q_emb = np.array(q_emb)
+        q_emb = np.array(q_emb, dtype=np.float32)
         sim = np.dot(self.embeddings, q_emb)
         top = np.argsort(sim)[::-1][:30]
         return [self.data[url] for url in self.urls[top]]
@@ -59,6 +68,10 @@ RESULT_TEMPLATE = """
 </div>
 """
 
+@app.route('/_ah/health')
+def health_check():
+    return "OK", 200
+
 
 # Define the main route
 @app.route("/", methods=["GET"])
@@ -67,6 +80,7 @@ def index():
     external_results = ""
 
     query = request.args.get("query")
+    logging.info(f"Received query: {query}")
     if query:
         results = search_engine.search(query)
         results = [render_template_string(RESULT_TEMPLATE, result=result) for result in results]
@@ -136,9 +150,15 @@ def index():
     """,
                                   results=results, external_results=external_results, RESULT_TEMPLATE=RESULT_TEMPLATE)
 
+logging.basicConfig(level=logging.INFO)
+
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 EXTERNAL_WEBSITE_SEARCH_URL = os.environ.get("EXTERNAL_WEBSITE_SEARCH_URL")
-search_engine = SearchEngine(os.environ.get("EMBEDDINGS_CSV"), os.environ.get("DATA_CSV"))
+logging.info(f"Start initializing search engine")
+search_engine = SearchEngine(os.environ.get("URLS_TXT"),
+                             os.environ.get("EMBEDDINGS_NPY"),
+                             os.environ.get("DATA_CSV"))
+logging.info(f"Finished")
 
 if __name__ == "__main__":
     app.run()
